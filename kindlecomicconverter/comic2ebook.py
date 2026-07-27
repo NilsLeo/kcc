@@ -60,6 +60,9 @@ from . import __version__
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 OS_SORT_KEY = os_sort_keygen()
+NESTED_SOURCE_TYPES = ('.7z', '.cb7', '.cbr', '.cbz', '.pdf', '.rar', '.zip')
+MAX_NESTED_SOURCE_DEPTH = 3
+MAX_NESTED_SOURCES = 100
 
 def main(argv=None):
     global options
@@ -1191,6 +1194,75 @@ def getDirectorySize(start_path='.'):
     return total_size
 
 
+def expandNestedSources(filetree, depth=0, expanded=None):
+    """Expand comic archives and PDFs found inside an extracted source.
+
+    Each nested source gets its own deterministically named directory so pages
+    from separate volumes cannot overwrite one another.  Bounds prevent an
+    accidentally recursive or adversarial archive from expanding forever.
+    """
+    if expanded is None:
+        expanded = [0]
+
+    entries = os_sorted(os.listdir(filetree))
+    for index, name in enumerate(entries):
+        source = os.path.join(filetree, name)
+        if os.path.islink(source):
+            raise RuntimeError('Nested source contains an unsafe symbolic link: %s' % source)
+        if os.path.isdir(source):
+            expandNestedSources(source, depth, expanded)
+            continue
+
+        extension = Path(name).suffix.lower()
+        if extension not in NESTED_SOURCE_TYPES:
+            continue
+        if depth >= MAX_NESTED_SOURCE_DEPTH:
+            raise RuntimeError('Nested source depth exceeds the supported limit of %i.' %
+                               MAX_NESTED_SOURCE_DEPTH)
+
+        expanded[0] += 1
+        if expanded[0] > MAX_NESTED_SOURCES:
+            raise RuntimeError('Nested source count exceeds the supported limit of %i.' %
+                               MAX_NESTED_SOURCES)
+
+        target = os.path.join(
+            filetree,
+            '%04i_%s' % (index, slugify_ext(Path(name).stem) or 'nested-source'),
+        )
+        os.makedirs(target)
+        print("Expanding nested source '%s'." % source)
+
+        try:
+            if extension == '.pdf':
+                target_width, target_height = options.profileData[1]
+                if options.cropping == 1:
+                    target_width *= 1.2
+                    target_height *= 1.2
+                elif options.cropping == 2:
+                    target_width *= 1.25
+                    target_height *= 1.25
+                mupdf_pdf_process_pages_parallel(
+                    source, target, target_width, target_height
+                )
+            else:
+                comicarchive.ComicArchive(source).extract(target)
+
+            target_root = os.path.realpath(target) + os.path.sep
+            for root, dirs, files in os.walk(target):
+                for extracted_name in dirs + files:
+                    extracted_path = os.path.realpath(os.path.join(root, extracted_name))
+                    if not extracted_path.startswith(target_root):
+                        raise RuntimeError(
+                            'Nested source attempted to extract outside its workspace.'
+                        )
+
+            os.remove(source)
+            expandNestedSources(target, depth + 1, expanded)
+        except Exception:
+            rmtree(target, True)
+            raise
+
+
 def getPanelViewResolution(imagesize, deviceres):
     scale = float(deviceres[0]) / float(imagesize[0])
     return int(deviceres[0]), int(scale * imagesize[1])
@@ -1840,6 +1912,7 @@ def makeBook(source, qtgui=None, job_progress=''):
         return [output_file]
 
     getMetadata(os.path.join(path, "OEBPS", "Images"), source)
+    expandNestedSources(os.path.join(path, "OEBPS", "Images"))
     removeNonImages(os.path.join(path, "OEBPS", "Images"))
     detectSuboptimalProcessing(os.path.join(path, "OEBPS", "Images"), source)
     chapterNames, cover_path = sanitizeTree(os.path.join(path, 'OEBPS', 'Images'))
