@@ -30,6 +30,12 @@ from .shared import dot_clean, getImageFileName, walkLevel, walkSort, sanitizeTr
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+# Keep intermediate webtoon strips small enough for Pillow to process without
+# allocating a multi-gigabyte RGB canvas. The downstream splitter will turn
+# each strip into device-sized pages.
+MAX_MERGED_IMAGE_HEIGHT = 131072 * 4
+MAX_MERGED_IMAGE_PIXELS = 25000000
+
 
 def mergeDirectoryTick(output):
     if output:
@@ -45,39 +51,61 @@ def mergeDirectory(work):
     try:
         directory = work[0]
         images = []
-        imagesValid = []
         sizes = []
-        targetHeight = 0
         dot_clean(directory)
         for root, _, files in walkLevel(directory, 0):
             for name in files:
                 if getImageFileName(name) is not None:
-                    i = Image.open(os.path.join(root, name))
-                    images.append([os.path.join(root, name), i.size[0], i.size[1]])
-                    sizes.append(i.size[0])
+                    path = os.path.join(root, name)
+                    with Image.open(path) as image:
+                        images.append([path, image.size[0], image.size[1]])
+                        sizes.append(image.size[0])
         if len(images) > 0:
             targetWidth = max(set(sizes), key=sizes.count)
-            for i in images:
-                targetHeight += i[2]
-                imagesValid.append(i[0])
-            # Silently drop directories that contain too many images
-            # 131072 = GIMP_MAX_IMAGE_SIZE / 4
-            if targetHeight > 131072 * 4:
-                raise RuntimeError(f'Image too tall at {targetHeight} pixels. {targetWidth} pixels wide. Try using separate chapter folders or file fusion.')
-            result = Image.new('RGB', (targetWidth, targetHeight))
-            y = 0
-            for i in imagesValid:
-                with Image.open(i) as img:
-                    img = img.convert('RGB')
-                    if img.size[0] < targetWidth or img.size[0] > targetWidth:
-                        widthPercent = (targetWidth / float(img.size[0]))
-                        heightSize = int((float(img.size[1]) * float(widthPercent)))
-                        img = ImageOps.fit(img, (targetWidth, heightSize), method=Image.BICUBIC, centering=(0.5, 0.5))
-                    result.paste(img, (0, y))
-                    y += img.size[1]
-                os.remove(i)
-            savePath = os.path.split(imagesValid[0])
-            result.save(os.path.join(savePath[0], os.path.splitext(savePath[1])[0] + '.png'), 'PNG')
+            maxHeight = min(MAX_MERGED_IMAGE_HEIGHT, max(1, MAX_MERGED_IMAGE_PIXELS // targetWidth))
+            parts = []
+            for path, width, height in images:
+                resizedHeight = int(height * targetWidth / width)
+                for top in range(0, resizedHeight, maxHeight):
+                    parts.append((path, resizedHeight, top, min(top + maxHeight, resizedHeight)))
+
+            batches = []
+            batch = []
+            batchHeight = 0
+            for part in parts:
+                partHeight = part[3] - part[2]
+                if batch and batchHeight + partHeight > maxHeight:
+                    batches.append(batch)
+                    batch = []
+                    batchHeight = 0
+                batch.append(part)
+                batchHeight += partHeight
+            if batch:
+                batches.append(batch)
+
+            saveDirectory, firstName = os.path.split(images[0][0])
+            saveStem = os.path.splitext(firstName)[0]
+            for batchNumber, batch in enumerate(batches, 1):
+                resultHeight = sum(part[3] - part[2] for part in batch)
+                result = Image.new('RGB', (targetWidth, resultHeight))
+                y = 0
+                for path, resizedHeight, top, bottom in batch:
+                    with Image.open(path) as img:
+                        img = img.convert('RGB')
+                        if img.size[0] != targetWidth:
+                            img = img.resize((targetWidth, resizedHeight), resample=Image.BICUBIC)
+                        if top != 0 or bottom != resizedHeight:
+                            img = img.crop((0, top, targetWidth, bottom))
+                        result.paste(img, (0, y))
+                        y += img.size[1]
+                result.save(
+                    os.path.join(saveDirectory, f'{saveStem}-kcc-merged-{batchNumber:04d}.png'),
+                    'PNG',
+                    compress_level=1,
+                )
+
+            for path, _, _ in images:
+                os.remove(path)
     except Exception:
         return str(sys.exc_info()[1]), sanitizeTrace(sys.exc_info()[2])
 
