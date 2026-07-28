@@ -47,7 +47,7 @@ from psutil import virtual_memory, disk_usage
 from html import escape as hescape
 import pymupdf
 
-from .shared import IMAGE_TYPES, getImageFileName, walkSort, walkLevel, sanitizeTrace, subprocess_run, dot_clean, get_contain_resolution
+from .shared import IMAGE_TYPES, configured_pool_size, drop_file_cache, getImageFileName, walkSort, walkLevel, sanitizeTrace, subprocess_run, dot_clean, get_contain_resolution
 from .comicarchive import SEVENZIP, available_archive_tools
 from . import comic2panel
 from . import image
@@ -678,7 +678,7 @@ def buildPDF(path, title, job_progress='', cover=None, output_file=None):
 
 def imgDirectoryProcessing(path, job_progress=''):
     global workerPool, workerOutput
-    workerPool = Pool(maxtasksperchild=100)
+    workerPool = Pool(configured_pool_size(), maxtasksperchild=100)
     workerOutput = []
     options.imgMetadata = {}
     work = []
@@ -733,8 +733,15 @@ def imgFileProcessing(work):
         opt = work[2]
         output = []
         workImg = image.ComicPageParser((dirpath, afile), opt)
-        for i in workImg.payload:
+        payload = workImg.payload
+        # Drop the parser so each payload entry is the only owner of its
+        # decoded image; consuming the list then frees pages one by one
+        # instead of holding every split/rotated copy until the end.
+        workImg = None
+        while payload:
+            i = payload.pop(0)
             img = image.ComicPage(opt, *i)
+            i = None
             if opt.cropping == 2 and not opt.webtoon:
                 img.cropPageNumber(opt.croppingp, opt.croppingm)
             if opt.cropping == 1 and not opt.webtoon:
@@ -763,6 +770,8 @@ def imgFileProcessing(work):
                 elif opt.pnglegacy:
                     img.convertToGrayscale()
             output.append(img.saveToDir())
+            img.image.close()
+            img = None
         return output
     except Exception:
         return str(sys.exc_info()[1]), sanitizeTrace(sys.exc_info()[2])
@@ -901,7 +910,7 @@ def mupdf_pdf_process_pages_parallel(filename, output_dir, target_width, target_
                     render = True
                     break
 
-    cpu = cpu_count()
+    cpu = configured_pool_size() or cpu_count()
 
     # make vectors of arguments for the processes
     vectors = [(i, cpu, filename, output_dir, target_width, target_height, options.pdfwidth) for i in range(cpu)]
@@ -909,7 +918,7 @@ def mupdf_pdf_process_pages_parallel(filename, output_dir, target_width, target_
 
 
     start = perf_counter()
-    with Pool() as pool:
+    with Pool(cpu) as pool:
         results = pool.map(
             render_page if render else extract_page, vectors
         )
@@ -971,6 +980,7 @@ def getWorkFolder(afile, workdir=None):
             except Exception as e:
                 rmtree(path, True)
                 raise UserWarning(f"Failed to extract images from PDF file. {e}")
+            drop_file_cache(afile)
             return workdir
         else:
             if not os.path.exists(fullPath):
@@ -978,6 +988,7 @@ def getWorkFolder(afile, workdir=None):
             try:
                 cbx = comicarchive.ComicArchive(afile)
                 path = cbx.extract(fullPath)
+                drop_file_cache(afile)
                 if options.lightnovel:
                     return workdir
                 sanitizePermissions(path)
@@ -2126,6 +2137,8 @@ def makeMOBI(work, qtgui=None):
         threadNumber = 4
     else:
         threadNumber = None
+    if configured_pool_size():
+        threadNumber = min(threadNumber or 4, configured_pool_size())
     makeMOBIWorkerPool = Pool(threadNumber, maxtasksperchild=10)
     for i in work:
         makeMOBIWorkerPool.apply_async(func=makeMOBIWorker, args=(i, ), callback=makeMOBIWorkerTick)

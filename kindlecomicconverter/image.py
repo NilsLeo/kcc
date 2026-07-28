@@ -29,7 +29,7 @@ from PIL import Image, ImageOps, ImageFile, ImageChops, ImageDraw
 from .rainbow_artifacts_eraser import erase_rainbow_artifacts
 from .page_number_crop_alg import get_bbox_crop_margin_page_number, get_bbox_crop_margin
 from .inter_panel_crop_alg import crop_empty_inter_panel
-from .shared import get_contain_resolution
+from .shared import get_contain_resolution, drop_file_cache
 
 AUTO_CROP_THRESHOLD = 0.015
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -173,6 +173,10 @@ class ComicPageParser:
         if not hasattr(Image, 'Resampling'):
             Image.Resampling = Image
         self.splitCheck()
+        # The payload entries own the (possibly split/rotated) images from
+        # here on; drop the parser's reference to the full decoded source so
+        # it can be freed as soon as the payload is consumed.
+        self.image = None
 
     def getImageHistogram(self, image):
         histogram = image.histogram()
@@ -415,6 +419,7 @@ class ComicPage:
                 targetPath = self.save_with_codec(self.image, self.targetPathStart + self.targetPathOrder)
             if os.path.isfile(self.orgPath):
                 os.remove(self.orgPath)
+            drop_file_cache(targetPath, sync=True)
             return [Path(targetPath).name, flags]
         except IOError as err:
             raise RuntimeError('Cannot save image. ' + str(err))
