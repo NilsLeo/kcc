@@ -733,8 +733,15 @@ def imgFileProcessing(work):
         opt = work[2]
         output = []
         workImg = image.ComicPageParser((dirpath, afile), opt)
-        for i in workImg.payload:
+        payload = workImg.payload
+        # Drop the parser so each payload entry is the only owner of its
+        # decoded image; consuming the list then frees pages one by one
+        # instead of holding every split/rotated copy until the end.
+        workImg = None
+        while payload:
+            i = payload.pop(0)
             img = image.ComicPage(opt, *i)
+            i = None
             if opt.cropping == 2 and not opt.webtoon:
                 img.cropPageNumber(opt.croppingp, opt.croppingm)
             if opt.cropping == 1 and not opt.webtoon:
@@ -763,6 +770,8 @@ def imgFileProcessing(work):
                 elif opt.pnglegacy:
                     img.convertToGrayscale()
             output.append(img.saveToDir())
+            img.image.close()
+            img = None
         return output
     except Exception:
         return str(sys.exc_info()[1]), sanitizeTrace(sys.exc_info()[2])

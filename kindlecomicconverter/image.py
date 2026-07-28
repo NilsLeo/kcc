@@ -173,6 +173,10 @@ class ComicPageParser:
         if not hasattr(Image, 'Resampling'):
             Image.Resampling = Image
         self.splitCheck()
+        # The payload entries own the (possibly split/rotated) images from
+        # here on; drop the parser's reference to the full decoded source so
+        # it can be freed as soon as the payload is consumed.
+        self.image = None
 
     def getImageHistogram(self, image):
         histogram = image.histogram()
