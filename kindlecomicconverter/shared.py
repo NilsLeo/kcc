@@ -30,6 +30,21 @@ from traceback import format_tb
 IMAGE_TYPES = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.jp2', '.avif')
 
 
+def configured_pool_size():
+    """Return the process pool size requested via the KCC_WORKERS environment
+    variable, or None to use the multiprocessing default (cpu_count).
+
+    Constrained environments (containers, low-memory machines) can set
+    KCC_WORKERS to bound peak memory usage: each image-processing worker holds
+    several decoded full-resolution pages in RAM at once.
+    """
+    try:
+        value = int(os.environ.get('KCC_WORKERS', ''))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 class HTMLStripper(HTMLParser):
     def __init__(self):
         HTMLParser.__init__(self)

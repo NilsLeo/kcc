@@ -47,7 +47,7 @@ from psutil import virtual_memory, disk_usage
 from html import escape as hescape
 import pymupdf
 
-from .shared import IMAGE_TYPES, getImageFileName, walkSort, walkLevel, sanitizeTrace, subprocess_run, dot_clean, get_contain_resolution
+from .shared import IMAGE_TYPES, configured_pool_size, getImageFileName, walkSort, walkLevel, sanitizeTrace, subprocess_run, dot_clean, get_contain_resolution
 from .comicarchive import SEVENZIP, available_archive_tools
 from . import comic2panel
 from . import image
@@ -678,7 +678,7 @@ def buildPDF(path, title, job_progress='', cover=None, output_file=None):
 
 def imgDirectoryProcessing(path, job_progress=''):
     global workerPool, workerOutput
-    workerPool = Pool(maxtasksperchild=100)
+    workerPool = Pool(configured_pool_size(), maxtasksperchild=100)
     workerOutput = []
     options.imgMetadata = {}
     work = []
@@ -889,7 +889,7 @@ def mupdf_pdf_process_pages_parallel(filename, output_dir, target_width, target_
                     render = True
                     break
 
-    cpu = cpu_count()
+    cpu = configured_pool_size() or cpu_count()
 
     # make vectors of arguments for the processes
     vectors = [(i, cpu, filename, output_dir, target_width, target_height, options.pdfwidth) for i in range(cpu)]
@@ -897,7 +897,7 @@ def mupdf_pdf_process_pages_parallel(filename, output_dir, target_width, target_
 
 
     start = perf_counter()
-    with Pool() as pool:
+    with Pool(cpu) as pool:
         results = pool.map(
             render_page if render else extract_page, vectors
         )
@@ -2094,6 +2094,8 @@ def makeMOBI(work, qtgui=None):
         threadNumber = 4
     else:
         threadNumber = None
+    if configured_pool_size():
+        threadNumber = min(threadNumber or 4, configured_pool_size())
     makeMOBIWorkerPool = Pool(threadNumber, maxtasksperchild=10)
     for i in work:
         makeMOBIWorkerPool.apply_async(func=makeMOBIWorker, args=(i, ), callback=makeMOBIWorkerTick)
