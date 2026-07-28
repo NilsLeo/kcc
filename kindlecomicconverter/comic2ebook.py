@@ -47,7 +47,7 @@ from psutil import virtual_memory, disk_usage
 from html import escape as hescape
 import pymupdf
 
-from .shared import IMAGE_TYPES, configured_pool_size, getImageFileName, walkSort, walkLevel, sanitizeTrace, subprocess_run, dot_clean, get_contain_resolution
+from .shared import IMAGE_TYPES, configured_pool_size, drop_file_cache, getImageFileName, walkSort, walkLevel, sanitizeTrace, subprocess_run, dot_clean, get_contain_resolution
 from .comicarchive import SEVENZIP, available_archive_tools
 from . import comic2panel
 from . import image
@@ -959,6 +959,7 @@ def getWorkFolder(afile, workdir=None):
             except Exception as e:
                 rmtree(path, True)
                 raise UserWarning(f"Failed to extract images from PDF file. {e}")
+            drop_file_cache(afile)
             return workdir
         else:
             if not os.path.exists(fullPath):
@@ -966,6 +967,7 @@ def getWorkFolder(afile, workdir=None):
             try:
                 cbx = comicarchive.ComicArchive(afile)
                 path = cbx.extract(fullPath)
+                drop_file_cache(afile)
                 if options.lightnovel:
                     return workdir
                 sanitizePermissions(path)

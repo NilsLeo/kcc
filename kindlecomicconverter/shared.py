@@ -45,6 +45,34 @@ def configured_pool_size():
     return value if value > 0 else None
 
 
+def drop_file_cache(path, sync=False):
+    """Best-effort hint to the kernel that a file's page cache is no longer
+    needed (POSIX_FADV_DONTNEED).
+
+    After extracting a large source archive its cached bytes are dead weight;
+    in memory-limited cgroups (Docker/Kubernetes) they still count toward the
+    container's memory usage until reclaimed. No-op on platforms without
+    posix_fadvise (Windows, macOS).
+
+    Freshly written files must be flushed first (sync=True): DONTNEED skips
+    dirty pages, so without a writeback the hint would do nothing.
+    """
+    if not hasattr(os, 'posix_fadvise'):
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        if sync:
+            os.fdatasync(fd)
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 class HTMLStripper(HTMLParser):
     def __init__(self):
         HTMLParser.__init__(self)
