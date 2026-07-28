@@ -71,6 +71,7 @@ class ComicArchive:
             raise UserWarning('Put images into folder and drag and drop folder into KCC window.')
 
         missing = []
+        attempted = False
 
         extraction_commands = [
             [TAR, '--exclude', '__MACOSX', '--exclude', '.DS_Store', '--exclude', 'thumbs.db', '--exclude', 'Thumbs.db', '-xf', self.basename, '-C', targetdir],
@@ -96,6 +97,7 @@ class ComicArchive:
             except FileNotFoundError:
                 missing.append(cmd[0])
             except CalledProcessError as err:
+                attempted = True
                 # 7z exit codes 1 (warning) and 2 (fatal error) can still leave the
                 # readable files extracted, e.g. an archive with a few corrupt members.
                 # Drop the members 7z reported as damaged ('ERROR: CRC Failed : <name>')
@@ -113,7 +115,17 @@ class ComicArchive:
                         print(f'WARNING: {self.basename} is damaged. {len(damaged)} corrupt files were skipped, continuing with the {extracted} readable ones.')
                         return targetdir
 
-        if missing:
+        # No extractor exited cleanly, but a damaged archive (e.g. a truncated RAR:
+        # unrar exit 3, unar exit 1) can still leave its readable entries extracted.
+        # Continue with whatever was recovered instead of failing the whole book.
+        salvaged = sum(len(files) for _, _, files in os.walk(targetdir))
+        if salvaged > 0:
+            print(f'WARNING: {self.basename} is damaged. Recovered {salvaged} entries, continuing.')
+            return targetdir
+
+        if attempted:
+            raise OSError(f'{self.basename} is a corrupt or truncated archive, nothing could be recovered.')
+        elif missing:
             raise OSError(f'Extraction failed, install <a href="https://github.com/ciromattia/kcc#7-zip">specialized extraction software.</a>  ')
         else:
             raise OSError(EXTRACTION_ERROR)
