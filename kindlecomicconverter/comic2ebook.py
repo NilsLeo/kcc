@@ -1250,7 +1250,8 @@ def unwrapNestedArchives(filetree, job_progress=''):
             print(f"{job_progress}Extracting nested archive {os.path.basename(archive)}...")
             try:
                 comicarchive.ComicArchive(archive).extract(os.path.dirname(archive))
-            except Exception:
+            except Exception as err:
+                print(f"{job_progress}Nested archive extraction failed: {err}")
                 return
             os.remove(archive)
         sanitizePermissions(filetree)
