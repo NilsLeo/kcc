@@ -1248,8 +1248,13 @@ def unwrapNestedArchives(filetree, job_progress=''):
             return
         for archive in archives:
             print(f"{job_progress}Extracting nested archive {os.path.basename(archive)}...")
+            # Extract into a fresh empty directory: extractors (and the
+            # partial-archive salvage in ComicArchive.extract) must not see
+            # the wrapper archive itself among their output files.
+            innerdir = os.path.splitext(archive)[0] + '.unwrapped'
+            os.makedirs(innerdir, exist_ok=True)
             try:
-                comicarchive.ComicArchive(archive).extract(os.path.dirname(archive))
+                comicarchive.ComicArchive(archive).extract(innerdir)
             except Exception as err:
                 print(f"{job_progress}Nested archive extraction failed: {err}")
                 return
