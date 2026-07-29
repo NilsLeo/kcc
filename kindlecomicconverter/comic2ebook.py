@@ -1225,6 +1225,43 @@ def getPanelViewSize(deviceres, size):
     return str(int(x)), str(int(y))
 
 
+NESTED_ARCHIVE_TYPES = ('.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar')
+
+
+def unwrapNestedArchives(filetree, job_progress=''):
+    # Wrapper archives (a lone .cbr inside a .rar, etc.) extract to a single
+    # non-image file and would die in removeNonImages with "No images
+    # detected". If extraction produced no images but did produce archives,
+    # unwrap them in place and continue. Capped at two levels; any unwrap
+    # failure falls through to the original no-images error path.
+    for _ in range(2):
+        images = False
+        archives = []
+        for root, _, files in os.walk(filetree):
+            for name in files:
+                _, ext = getImageFileName(name)
+                if ext in IMAGE_TYPES:
+                    images = True
+                elif ext in NESTED_ARCHIVE_TYPES:
+                    archives.append(os.path.join(root, name))
+        if images or not archives:
+            return
+        for archive in archives:
+            print(f"{job_progress}Extracting nested archive {os.path.basename(archive)}...")
+            # Extract into a fresh empty directory: extractors (and the
+            # partial-archive salvage in ComicArchive.extract) must not see
+            # the wrapper archive itself among their output files.
+            innerdir = os.path.splitext(archive)[0] + '.unwrapped'
+            os.makedirs(innerdir, exist_ok=True)
+            try:
+                comicarchive.ComicArchive(archive).extract(innerdir)
+            except Exception as err:
+                print(f"{job_progress}Nested archive extraction failed: {err}")
+                return
+            os.remove(archive)
+        sanitizePermissions(filetree)
+
+
 def removeNonImages(filetree):
     # clean dot from original file
     dot_clean(filetree)
@@ -1852,6 +1889,7 @@ def makeBook(source, qtgui=None, job_progress=''):
         checkPre('LLL-')
     print(f"{job_progress}Preparing source images...")
     path = getWorkFolder(source)
+    unwrapNestedArchives(os.path.join(path, 'OEBPS', 'Images'), job_progress)
     print(f"{job_progress}Checking images...")
 
     if options.lightnovel:
