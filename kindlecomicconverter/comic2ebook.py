@@ -1056,9 +1056,56 @@ def getWorkFolder(afile, workdir=None):
                         # TODO empty image
                         if img_path:
                             ordered_image_paths.append(img_path)
-                    # fallback if naive spine extraction fails
+                    # Fallback if naive spine extraction fails outright.
                     if not ordered_image_paths:
                         return workdir
+
+                    # Some EPUBs (typically ebook-converter output with a flat archive
+                    # root) declare every page in the manifest but ship only one or two
+                    # XHTML documents holding all the <img> tags. Since the loop above
+                    # keeps just the largest image per spine document, such a book
+                    # silently converts to a handful of pages instead of hundreds.
+                    #
+                    # Threshold: fall back only when the spine recovered less than half
+                    # of the images the manifest declares. A correct EPUB never loses
+                    # half its pages this way - the legitimate gap between manifest
+                    # images and spine pages is small and bounded (cover, duplicated
+                    # thumbnails, decorative art, or a handful of double-page spreads
+                    # collapsed into one document). 50% is far outside that band while
+                    # still catching this defect decisively (here: 3 of 450, 0.7%), so
+                    # well-formed books keep their spine ordering untouched.
+                    manifest_image_hrefs = [
+                        manifest_item.attrib.get('href')
+                        for manifest_item in opf.findall(r'.//{*}item')
+                        if (manifest_item.attrib.get('media-type') or '').startswith('image/')
+                    ]
+                    if manifest_image_hrefs and len(ordered_image_paths) < len(manifest_image_hrefs) * 0.5:
+                        # Manifest order is used as-is rather than natural-sorted by
+                        # filename. For this class of file the manifest is emitted in
+                        # document order, which is the true reading order and already
+                        # matches a numeric sort; re-sorting would only differ for books
+                        # whose filenames are not zero-padded or not numeric, where the
+                        # manifest is the more trustworthy signal.
+                        manifest_image_paths = []
+                        for href in manifest_image_hrefs:
+                            candidate = os.path.join(os.path.dirname(opf_path), href)
+                            if os.path.isfile(candidate):
+                                manifest_image_paths.append(candidate)
+                        if len(manifest_image_paths) > len(ordered_image_paths):
+                            print("WARNING: EPUB spine yielded %d of %d images declared in the manifest. "
+                                  "Falling back to manifest order; page order may differ from the original."
+                                  % (len(ordered_image_paths), len(manifest_image_hrefs)))
+                            # getWorkFolder runs before setGUI() binds the module-level
+                            # GUI global, so look it up defensively.
+                            gui = globals().get('GUI')
+                            if gui:
+                                gui.addMessage.emit('EPUB spine yielded %d of %d images declared in the manifest.'
+                                                    % (len(ordered_image_paths), len(manifest_image_hrefs)),
+                                                    'warning', False)
+                                gui.addMessage.emit('Falling back to manifest order; page order may differ from the '
+                                                    'original.', 'warning', False)
+                                gui.addMessage.emit('', '', False)
+                            ordered_image_paths = manifest_image_paths
 
                     if options.tempdir:
                         workdir2 = mkdtemp('', 'KCC-', os.path.dirname(afile))
