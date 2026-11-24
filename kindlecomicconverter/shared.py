@@ -30,21 +30,6 @@ from traceback import format_tb
 IMAGE_TYPES = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.jp2', '.avif')
 
 
-def configured_pool_size():
-    """Return the process pool size requested via the KCC_WORKERS environment
-    variable, or None to use the multiprocessing default (cpu_count).
-
-    Constrained environments (containers, low-memory machines) can set
-    KCC_WORKERS to bound peak memory usage: each image-processing worker holds
-    several decoded full-resolution pages in RAM at once.
-    """
-    try:
-        value = int(os.environ.get('KCC_WORKERS', ''))
-    except ValueError:
-        return None
-    return value if value > 0 else None
-
-
 def drop_file_cache(path, sync=False):
     """Best-effort hint to the kernel that a file's page cache is no longer
     needed (POSIX_FADV_DONTNEED).
